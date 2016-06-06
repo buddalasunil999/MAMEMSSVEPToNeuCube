@@ -17,7 +17,7 @@ namespace ImportData
 
         private void button1_Click(object sender, EventArgs e)
         {
-            string directory = textBox1.Text; ;
+            string directory = textBox1.Text;
             string cygwinLocation = textBox2.Text;
             string cygwinHomeDirectory = textBox5.Text;
             string destination = textBox4.Text;
@@ -27,49 +27,6 @@ namespace ImportData
             LoadFromPhysioNet(directory, outputlines);
             ExecuteCommand(cygwinLocation, outputlines);
             GenerateNeucomFiles(classFileLocation, cygwinHomeDirectory, destination);
-        }
-
-        private void GenerateNeucomFiles(string classFileLocation, string cygwinHomeDirectory, string destination)
-        {
-            int count = 1;
-            using (StreamWriter classFile = new StreamWriter(classFileLocation))
-            {
-                foreach (var file in Directory.GetFiles(cygwinHomeDirectory, "*.csv"))
-                {
-                    string filePath = Path.Combine(destination, string.Format("sam{0}_eeg.csv", count++));
-                    using (StreamWriter outputFile = new StreamWriter(filePath))
-                    {
-                        foreach (var line in File.ReadAllLines(file).Skip(2))
-                        {
-                            outputFile.WriteLine(line.Remove(0, line.IndexOf(',') + 1));
-                        }
-                    }
-
-                    int cat = GetClass(file);
-                    classFile.WriteLine(cat);
-                }
-            }
-        }
-
-        private int GetClass(string file)
-        {
-            double cat = Convert.ToDouble(Path.GetFileNameWithoutExtension(file).Split('_').Last());
-
-            switch ((int)cat)
-            {
-                case 6:
-                    return 1;
-                case 7:
-                    return 2;
-                case 8:
-                    return 3;
-                case 10:
-                    return 4;
-                case 12:
-                    return 5;
-            }
-
-            return 0;
         }
 
         private void LoadFromPhysioNet(string directory, List<string> outputlines)
@@ -119,6 +76,49 @@ namespace ImportData
                     file.WriteLine(line);
                 }
             }
+        }
+
+        private void GenerateNeucomFiles(string classFileLocation, string cygwinHomeDirectory, string destination)
+        {
+            int count = 1;
+            using (StreamWriter classFile = new StreamWriter(classFileLocation))
+            {
+                foreach (var file in Directory.GetFiles(cygwinHomeDirectory, "*.csv"))
+                {
+                    string filePath = Path.Combine(destination, string.Format("sam{0}_eeg.csv", count++));
+                    using (StreamWriter outputFile = new StreamWriter(filePath))
+                    {
+                        foreach (var line in File.ReadAllLines(file).Skip(2))
+                        {
+                            outputFile.WriteLine(line.Remove(0, line.IndexOf(',') + 1));
+                        }
+                    }
+
+                    int cat = GetClass(file);
+                    classFile.WriteLine(cat);
+                }
+            }
+        }
+
+        private int GetClass(string file)
+        {
+            double cat = Convert.ToDouble(Path.GetFileNameWithoutExtension(file).Split('_').Last());
+
+            switch ((int)cat)
+            {
+                case 6:
+                    return 1;
+                case 7:
+                    return 2;
+                case 8:
+                    return 3;
+                case 10:
+                    return 4;
+                case 12:
+                    return 5;
+            }
+
+            return 0;
         }
 
         public void ExecuteCommand(string cygwinLocation, List<string> lines)
