@@ -52,9 +52,9 @@
             this.label1.AutoSize = true;
             this.label1.Location = new System.Drawing.Point(12, 38);
             this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(126, 13);
+            this.label1.Size = new System.Drawing.Size(130, 13);
             this.label1.TabIndex = 1;
-            this.label1.Text = "Frequency Files Directory";
+            this.label1.Text = "Physionet files Destination";
             // 
             // textBox1
             // 
@@ -94,9 +94,9 @@
             this.label4.AutoSize = true;
             this.label4.Location = new System.Drawing.Point(12, 119);
             this.label4.Name = "label4";
-            this.label4.Size = new System.Drawing.Size(60, 13);
+            this.label4.Size = new System.Drawing.Size(108, 13);
             this.label4.TabIndex = 7;
-            this.label4.Text = "Destination";
+            this.label4.Text = "NeuCube Destination";
             // 
             // Form1
             // 

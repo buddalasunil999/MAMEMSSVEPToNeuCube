@@ -22,18 +22,38 @@ namespace ImportData
             string destination = textBox4.Text;
             string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
 
+            string freqDir = Path.Combine(directory, "freq");
+            if (!Directory.Exists(freqDir))
+                Directory.CreateDirectory(freqDir);
+
             string csvFilesDirectory = Path.Combine(directory, "csv");
             if (!Directory.Exists(csvFilesDirectory))
                 Directory.CreateDirectory(csvFilesDirectory);
 
+            LoadFrequencyFilesFromPhysioNet(freqDir, cygwinLocation);
             List<OutputLine> outputlines = new List<OutputLine>();
-            LoadFromPhysioNet(directory, csvFilesDirectory, outputlines);
-            ExecuteCommand(cygwinLocation, outputlines, (li) => { GenerateNeucomFile(classFileLocation, li, destination); });
-
-            //GenerateNeucomFiles(classFileLocation, cygwinHomeDirectory, destination);
+            LoadFromPhysioNet(directory, freqDir, csvFilesDirectory, outputlines);
+            ExecuteCommand(cygwinLocation, outputlines, (li) => { });
+            GenerateNeucomFiles(classFileLocation, outputlines, destination);
         }
 
-        private void LoadFromPhysioNet(string directory, string destFolder, List<OutputLine> outputlines)
+        private void LoadFrequencyFilesFromPhysioNet(string freqDir, string cygwinLocation)
+        {
+            List<OutputLine> lines = new List<OutputLine>();
+            for (int i = 1; i < 12; i++)
+            {
+                string num = i.ToString();
+                if (i < 10)
+                    num = "0" + num;
+                string path = Path.Combine(freqDir, string.Format("S0{0}a_freq.txt", num));
+                string command = string.Format("rdann -r mssvepdb/S001a -a freq -v >'{0}'", path);
+                lines.Add(new OutputLine(command, path));
+            }
+
+            ExecuteCommand(cygwinLocation, lines, (li) => { });
+        }
+
+        private void LoadFromPhysioNet(string directory, string freqDir, string destFolder, List<OutputLine> outputlines)
         {
             List<double> classes = new List<double> { 6.66, 7.5, 8.57, 10, 12 };
             if (!Directory.Exists(Path.Combine(directory, "Commands")))
@@ -41,7 +61,7 @@ namespace ImportData
 
             string output = Path.Combine(directory, "Commands", "commands.txt");
 
-            foreach (var file in Directory.GetFiles(directory))
+            foreach (var file in Directory.GetFiles(freqDir))
             {
                 string name = Path.GetFileNameWithoutExtension(file).Split('_')[0];
                 string[] lines = File.ReadAllLines(file);
@@ -85,15 +105,16 @@ namespace ImportData
             }
         }
 
-        private void GenerateNeucomFiles(string classFileLocation, string homeDirectory, string destination)
+        private void GenerateNeucomFiles(string classFileLocation, List<OutputLine> outputlines, string destination)
         {
-            int count = 1;
             using (StreamWriter classFile = new StreamWriter(classFileLocation))
             {
-                foreach (var file in Directory.GetFiles(homeDirectory, "*.csv"))
+                foreach (var output in outputlines)
                 {
-                    string filePath = Path.Combine(destination, string.Format("sam{0}_eeg.csv", count++));
-                    using (StreamWriter outputFile = new StreamWriter(filePath))
+                    string file = output.Path;
+
+                    string destFilePath = Path.Combine(destination, string.Format("sam{0}_eeg.csv", output.Count));
+                    using (StreamWriter outputFile = new StreamWriter(destFilePath))
                     {
                         foreach (var line in File.ReadAllLines(file).Skip(2))
                         {
@@ -189,15 +210,10 @@ namespace ImportData
             //    }
             //}
 
-            var prevLine = lines[0];
-            sw.WriteLine(prevLine.Command);
-
             for (int i = 1; i < lines.Count; i++)
             {
-                var line = lines[i];
-                sw.WriteLine(line.Command);
-                callBack(prevLine);
-                prevLine = line;
+                var currentLine = lines[i];
+                sw.WriteLine(currentLine.Command);
             }
 
             sw.Close();
