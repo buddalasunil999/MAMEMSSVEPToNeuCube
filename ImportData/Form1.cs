@@ -19,17 +19,21 @@ namespace ImportData
         {
             string directory = textBox1.Text;
             string cygwinLocation = textBox2.Text;
-            string cygwinHomeDirectory = textBox5.Text;
             string destination = textBox4.Text;
             string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
 
-            List<string> outputlines = new List<string>();
-            LoadFromPhysioNet(directory, outputlines);
-            ExecuteCommand(cygwinLocation, outputlines);
-            GenerateNeucomFiles(classFileLocation, cygwinHomeDirectory, destination);
+            string csvFilesDirectory = Path.Combine(directory, "csv");
+            if (!Directory.Exists(csvFilesDirectory))
+                Directory.CreateDirectory(csvFilesDirectory);
+
+            List<OutputLine> outputlines = new List<OutputLine>();
+            LoadFromPhysioNet(directory, csvFilesDirectory, outputlines);
+            ExecuteCommand(cygwinLocation, outputlines, (li) => { GenerateNeucomFile(classFileLocation, li, destination); });
+
+            //GenerateNeucomFiles(classFileLocation, cygwinHomeDirectory, destination);
         }
 
-        private void LoadFromPhysioNet(string directory, List<string> outputlines)
+        private void LoadFromPhysioNet(string directory, string destFolder, List<OutputLine> outputlines)
         {
             List<double> classes = new List<double> { 6.66, 7.5, 8.57, 10, 12 };
             if (!Directory.Exists(Path.Combine(directory, "Commands")))
@@ -60,7 +64,10 @@ namespace ImportData
                                 count++;
                                 string[] timeformats = { @"m\:ss", @"mm\:ss", @"h\:mm\:ss" };
                                 int toatal = Convert.ToInt32(TimeSpan.ParseExact(splits.First().Split('.')[0], timeformats, CultureInfo.InvariantCulture).TotalSeconds);
-                                outputlines.Add(string.Format("rdsamp -r mssvepdb/{0} -c -H -f {1} -t {2} -v -pd -s 46 36 35 1 100 125 68 95 201 20 182 169 149 223 17 115 >{0}_{1}_To_{2}_{3}.csv", name, toatal, toatal + 5, cl));
+
+                                string destPath = Path.Combine(destFolder, string.Format("{0}_{1}_To_{2}_{3}.csv", name, toatal, toatal + 5, cl));
+                                string command = string.Format("rdsamp -r mssvepdb/{0} -c -H -f {1} -t {2} -v -pd -s 46 36 35 1 100 125 68 95 201 20 182 169 149 223 17 115 >'{3}'", name, toatal, toatal + 5, destPath);
+                                outputlines.Add(new OutputLine(command, destPath));
                             }
                         }
                     }
@@ -71,19 +78,19 @@ namespace ImportData
 
             using (StreamWriter file = new StreamWriter(output))
             {
-                foreach (string line in outputlines)
+                foreach (OutputLine line in outputlines)
                 {
-                    file.WriteLine(line);
+                    file.WriteLine(line.Command);
                 }
             }
         }
 
-        private void GenerateNeucomFiles(string classFileLocation, string cygwinHomeDirectory, string destination)
+        private void GenerateNeucomFiles(string classFileLocation, string homeDirectory, string destination)
         {
             int count = 1;
             using (StreamWriter classFile = new StreamWriter(classFileLocation))
             {
-                foreach (var file in Directory.GetFiles(cygwinHomeDirectory, "*.csv"))
+                foreach (var file in Directory.GetFiles(homeDirectory, "*.csv"))
                 {
                     string filePath = Path.Combine(destination, string.Format("sam{0}_eeg.csv", count++));
                     using (StreamWriter outputFile = new StreamWriter(filePath))
@@ -97,6 +104,28 @@ namespace ImportData
                     int cat = GetClass(file);
                     classFile.WriteLine(cat);
                 }
+            }
+        }
+
+        private void GenerateNeucomFile(string classFileLocation, OutputLine physionetFile, string destination)
+        {
+            if (!File.Exists(classFileLocation))
+                File.Create(classFileLocation);
+
+            using (StreamWriter classFile = new StreamWriter(classFileLocation, true))
+            {
+                string filePath = Path.Combine(destination, string.Format("sam{0}_eeg.csv", physionetFile.Count));
+                using (StreamWriter outputFile = new StreamWriter(filePath))
+                {
+                    foreach (var line in File.ReadAllLines(physionetFile.Path).Skip(2))
+                    {
+                        outputFile.WriteLine(line.Remove(0, line.IndexOf(',') + 1));
+                    }
+                }
+
+                int cat = GetClass(physionetFile.Path);
+                classFile.WriteLine(cat);
+                classFile.Close();
             }
         }
 
@@ -121,7 +150,7 @@ namespace ImportData
             return 0;
         }
 
-        public void ExecuteCommand(string cygwinLocation, List<string> lines)
+        public void ExecuteCommand(string cygwinLocation, List<OutputLine> lines, Action<OutputLine> callBack)
         {
             Process proc = new Process();
             string stOut = "";
@@ -160,9 +189,15 @@ namespace ImportData
             //    }
             //}
 
-            foreach (string line in lines)
+            var prevLine = lines[0];
+            sw.WriteLine(prevLine.Command);
+
+            for (int i = 1; i < lines.Count; i++)
             {
-                sw.WriteLine(line);
+                var line = lines[i];
+                sw.WriteLine(line.Command);
+                callBack(prevLine);
+                prevLine = line;
             }
 
             sw.Close();
@@ -171,10 +206,22 @@ namespace ImportData
             proc.WaitForExit();
             proc.Close();
         }
+    }
 
-        private void textBox1_TextChanged(object sender, EventArgs e)
+    public class OutputLine
+    {
+        static int count = 0;
+
+        public OutputLine(string command, string path)
         {
-
+            count++;
+            Command = command;
+            Path = path;
+            Count = count;
         }
+
+        public string Command { set; get; }
+        public int Count { get; internal set; }
+        public string Path { set; get; }
     }
 }
