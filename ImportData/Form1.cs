@@ -20,6 +20,9 @@ namespace ImportData
             string directory = textBox1.Text;
             string cygwinLocation = textBox2.Text;
             string destination = Path.Combine(directory, "output");
+            if (!Directory.Exists(destination))
+                Directory.CreateDirectory(destination);
+
             string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
 
             string freqDir = Path.Combine(directory, "freq");
@@ -113,7 +116,7 @@ namespace ImportData
 
                                 if (period)
                                 {
-                                    beginTime = total.ToString();
+                                    beginTime = (total - 5).ToString();
                                     endTime = (total + 5).ToString();
                                 }
 
@@ -141,6 +144,9 @@ namespace ImportData
 
         private void GenerateNeucomFiles(string classFileLocation, List<OutputLine> outputlines, string destination)
         {
+            if (!File.Exists(classFileLocation))
+                File.Create(classFileLocation).Close();
+
             using (StreamWriter classFile = new StreamWriter(classFileLocation))
             {
                 foreach (var output in outputlines)
@@ -269,30 +275,36 @@ namespace ImportData
 
                 int length = allLines[0].Split(',').Count();
 
-                var groups = allLines.Select((val, index) => new { Value = val.Split(','), Index = index + 1 }).GroupBy(x => x.Index % Convert.ToInt32(textBox3.Text));
+                int count = 0;
+                int take = allLines.Length / Convert.ToInt32(textBox3.Text);
+                var selectedLines = new List<string>();
 
-                var selectedLines = groups.Select(g =>
+                do
                 {
+                    var filteredLines = allLines.Skip(count).Take(take).Select(x => x.Split(',')).ToList();
                     List<string> values = new List<string>();
                     for (int i = 0; i < length; i++)
                     {
                         if (isDistinct)
                         {
-                            values.Add(g.First().Value[i]);
+                            values.Add(filteredLines[0][i]);
                         }
                         else
                         {
                             double sum = 0;
-                            foreach (var item in g)
+                            foreach (var item in filteredLines)
                             {
-                                sum += Convert.ToDouble(item.Value[i]);
+                                sum += (item[i] == "-" ? 0 : Convert.ToDouble(item[i]));
                             }
 
-                            values.Add((sum / g.Count()).ToString());
+                            values.Add((sum / filteredLines.Count()).ToString());
                         }
                     }
-                    return string.Join(",", values);
-                });
+
+                    selectedLines.Add(string.Join(",", values));
+
+                    count += take;
+                } while (count < allLines.Length);
 
                 File.WriteAllLines(file, selectedLines);
             }
