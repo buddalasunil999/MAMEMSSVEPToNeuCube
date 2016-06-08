@@ -283,13 +283,14 @@ namespace ImportData
                 {
                     var filteredLines = allLines.Skip(count).Take(take).Select(x => x.Split(',')).ToList();
                     List<string> values = new List<string>();
-                    for (int i = 0; i < length; i++)
+
+                    if (isDistinct)
                     {
-                        if (isDistinct)
-                        {
-                            values.Add(filteredLines[0][i]);
-                        }
-                        else
+                        values = filteredLines[0].ToList();
+                    }
+                    else
+                    {
+                        for (int i = 0; i < length; i++)
                         {
                             double sum = 0;
                             foreach (var item in filteredLines)
