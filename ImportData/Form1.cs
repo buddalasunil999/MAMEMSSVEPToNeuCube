@@ -19,7 +19,7 @@ namespace ImportData
         {
             string directory = textBox1.Text;
             string cygwinLocation = textBox2.Text;
-            string destination = textBox4.Text;
+            string destination = Path.Combine(directory, "output");
             string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
 
             string freqDir = Path.Combine(directory, "freq");
@@ -30,11 +30,16 @@ namespace ImportData
             if (!Directory.Exists(csvFilesDirectory))
                 Directory.CreateDirectory(csvFilesDirectory);
 
-            LoadFrequencyFilesFromPhysioNet(freqDir, cygwinLocation);
-            List<OutputLine> outputlines = new List<OutputLine>();
-            LoadFromPhysioNet(directory, freqDir, csvFilesDirectory, outputlines);
-            ExecuteCommand(cygwinLocation, outputlines, (li) => { });
-            GenerateNeucomFiles(classFileLocation, outputlines, destination);
+            //LoadFrequencyFilesFromPhysioNet(freqDir, cygwinLocation);
+            PopulateSubjects(freqDir);
+        }
+
+        private void PopulateSubjects(string freqDir)
+        {
+            foreach (var file in Directory.GetFiles(freqDir).Select(path => Path.GetFileName(path).Split('_')[0]).Distinct())
+            {
+                checkedListBox1.Items.Add(file, true);
+            }
         }
 
         private void LoadFrequencyFilesFromPhysioNet(string freqDir, string cygwinLocation)
@@ -45,16 +50,22 @@ namespace ImportData
                 string num = i.ToString();
                 if (i < 10)
                     num = "0" + num;
-                string path = Path.Combine(freqDir, string.Format("S0{0}a_freq.txt", num));
-                string command = string.Format("rdann -r mssvepdb/S001a -a freq -v >'{0}'", path);
-                lines.Add(new OutputLine(command, path));
+                string name = string.Format("S0{0}a_freq.txt", num);
+                string path = Path.Combine(freqDir, name);
+                string command = string.Format("rdann -r mssvepdb/dataset1/S001a -a freq -v >'{0}'", path);
+                lines.Add(new OutputLine(command, path, name.Split('_')[0]));
             }
 
-            ExecuteCommand(cygwinLocation, lines, (li) => { });
+            foreach (var line in lines)
+            {
+                ExecuteCommand(cygwinLocation, line, (li) => { });
+            }
         }
 
         private void LoadFromPhysioNet(string directory, string freqDir, string destFolder, List<OutputLine> outputlines)
         {
+            bool period = false;
+
             List<double> classes = new List<double> { 6.66, 7.5, 8.57, 10, 12 };
             if (!Directory.Exists(Path.Combine(directory, "Commands")))
                 Directory.CreateDirectory(Path.Combine(directory, "Commands"));
@@ -64,35 +75,58 @@ namespace ImportData
             foreach (var file in Directory.GetFiles(freqDir))
             {
                 string name = Path.GetFileNameWithoutExtension(file).Split('_')[0];
-                string[] lines = File.ReadAllLines(file);
+                var lines = File.ReadAllLines(file).Skip(1);
 
                 int count = 0;
-                foreach (var line in lines.Skip(1))
+                List<string> covered = new List<string>();
+                string begin = string.Empty;
+                string end = string.Empty;
+
+                for (int i = 0; i < lines.Count(); i++)
                 {
+                    var line = lines.ElementAt(i);
+
                     string[] splits = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
 
                     string last = splits.Last();
 
                     if (last.EndsWith("B"))
                     {
+                        begin = splits.First();
+                    }
+                    else
+                    {
+                        end = splits.First();
+
                         double val = Convert.ToDouble(last.Remove(last.Length - 1));
 
                         foreach (double cl in classes)
                         {
-                            if (Math.Abs(cl - val) < 0.5)
+                            if (Math.Abs(cl - val) < 0.5 && !covered.Contains(cl.ToString()))
                             {
                                 count++;
                                 string[] timeformats = { @"m\:ss", @"mm\:ss", @"h\:mm\:ss" };
-                                int toatal = Convert.ToInt32(TimeSpan.ParseExact(splits.First().Split('.')[0], timeformats, CultureInfo.InvariantCulture).TotalSeconds);
+                                int total = Convert.ToInt32(TimeSpan.ParseExact(splits.First().Split('.')[0], timeformats, CultureInfo.InvariantCulture).TotalSeconds);
 
-                                string destPath = Path.Combine(destFolder, string.Format("{0}_{1}_To_{2}_{3}.csv", name, toatal, toatal + 5, cl));
-                                string command = string.Format("rdsamp -r mssvepdb/{0} -c -H -f {1} -t {2} -v -pd -s 46 36 35 1 100 125 68 95 201 20 182 169 149 223 17 115 >'{3}'", name, toatal, toatal + 5, destPath);
-                                outputlines.Add(new OutputLine(command, destPath));
+                                string beginTime = begin;
+                                string endTime = end;
+
+                                if (period)
+                                {
+                                    beginTime = total.ToString();
+                                    endTime = (total + 5).ToString();
+                                }
+
+                                string destPath = Path.Combine(destFolder, string.Format("{0}_{1}_To_{2}_{3}.csv", name, beginTime.Replace(":", "."), endTime.Replace(":", "."), cl));
+                                string command = string.Format("rdsamp -r mssvepdb/dataset1/{0} -c -H -f {1} -t {2} -v -pd -s 46 36 35 1 100 125 68 95 201 20 182 169 149 223 17 115 >'{3}'", name, beginTime, endTime, destPath);
+                                outputlines.Add(new OutputLine(command, destPath, name));
+                                covered.Add(cl.ToString());
+                                break;
                             }
                         }
                     }
 
-                    if (count == 5) break;
+                    if (count == classes.Count) break;
                 }
             }
 
@@ -131,7 +165,7 @@ namespace ImportData
         private void GenerateNeucomFile(string classFileLocation, OutputLine physionetFile, string destination)
         {
             if (!File.Exists(classFileLocation))
-                File.Create(classFileLocation);
+                File.Create(classFileLocation).Close();
 
             using (StreamWriter classFile = new StreamWriter(classFileLocation, true))
             {
@@ -171,7 +205,7 @@ namespace ImportData
             return 0;
         }
 
-        public void ExecuteCommand(string cygwinLocation, List<OutputLine> lines, Action<OutputLine> callBack)
+        public void ExecuteCommand(string cygwinLocation, OutputLine line, Action<OutputLine> callBack)
         {
             Process proc = new Process();
             string stOut = "";
@@ -210,11 +244,9 @@ namespace ImportData
             //    }
             //}
 
-            for (int i = 1; i < lines.Count; i++)
-            {
-                var currentLine = lines[i];
-                sw.WriteLine(currentLine.Command);
-            }
+
+            if (checkBox1.Checked || !File.Exists(line.Path.Replace(":", ".")))
+                sw.WriteLine(line.Command);
 
             sw.Close();
             sr.Close();
@@ -222,22 +254,135 @@ namespace ImportData
             proc.WaitForExit();
             proc.Close();
         }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            bool isDistinct = !checkBox2.Checked;
+
+            string path = Path.Combine(textBox1.Text, "output");
+
+            var allFiles = Directory.GetFiles(path, "sam*");
+
+            foreach (var file in allFiles)
+            {
+                string[] allLines = File.ReadAllLines(file);
+
+                int length = allLines[0].Split(',').Count();
+
+                var groups = allLines.Select((val, index) => new { Value = val.Split(','), Index = index + 1 }).GroupBy(x => x.Index % Convert.ToInt32(textBox3.Text));
+
+                var selectedLines = groups.Select(g =>
+                {
+                    List<string> values = new List<string>();
+                    for (int i = 0; i < length; i++)
+                    {
+                        if (isDistinct)
+                        {
+                            values.Add(g.First().Value[i]);
+                        }
+                        else
+                        {
+                            double sum = 0;
+                            foreach (var item in g)
+                            {
+                                sum += Convert.ToDouble(item.Value[i]);
+                            }
+
+                            values.Add((sum / g.Count()).ToString());
+                        }
+                    }
+                    return string.Join(",", values);
+                });
+
+                File.WriteAllLines(file, selectedLines);
+            }
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            string path = Path.Combine(textBox1.Text, "output");
+            DirectoryInfo info = new DirectoryInfo(path);
+            string destination = Path.Combine(info.Parent.FullName, info.Name + "_others");
+
+            if (!Directory.Exists(destination))
+                Directory.CreateDirectory(destination);
+
+            var allFiles = Directory.GetFiles(path, "sam*");
+
+            string[] allClasses = File.ReadAllLines(Path.Combine(path, "tar_class_labels.csv"));
+
+            List<string> combined1 = new List<string>();
+            List<string> combined2 = new List<string>();
+            combined1.Add("F7,FP1,F3,F8,Pz,Oz,T7,P7,T8,Fz,C4,P8,O2,F4,FP2,O1,Class");
+
+            for (int i = 0; i < allFiles.Length; i++)
+            {
+                string file = allFiles[i];
+                string cl = allClasses[i];
+
+                var lines = File.ReadAllLines(file);
+                foreach (var line in lines)
+                {
+                    combined1.Add(line + "," + cl);
+                    combined2.Add(string.Join(" ", line.Split(',')) + " " + cl);
+                }
+            }
+
+            string dest1 = Path.Combine(destination, "data.csv");
+            string dest2 = Path.Combine(destination, "data.txt");
+            if (!File.Exists(dest1))
+                File.Create(dest1).Close();
+
+            if (!File.Exists(dest2))
+                File.Create(dest2).Close();
+
+            File.WriteAllLines(dest1, combined1);
+            File.WriteAllLines(dest2, combined2);
+        }
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+            string directory = textBox1.Text;
+            string cygwinLocation = textBox2.Text;
+            string destination = Path.Combine(directory, "output");
+            string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
+            string freqDir = Path.Combine(directory, "freq");
+            string csvFilesDirectory = Path.Combine(directory, "csv");
+
+            List<OutputLine> outputlines = new List<OutputLine>();
+            LoadFromPhysioNet(directory, freqDir, csvFilesDirectory, outputlines);
+
+            if (checkedListBox1.CheckedItems.Count > 0)
+            {
+                foreach (var line in outputlines.Where(x => checkedListBox1.CheckedItems.Cast<string>().Contains(x.Name)))
+                {
+                    ExecuteCommand(cygwinLocation, line, (li) =>
+                  {
+                      //File.WriteAllLines(Path.Combine(directory, "Commands", "commands.txt"), outputlines.Except(new[] { li }).Select(x => x.Command));
+                  });
+                }
+            }
+
+            GenerateNeucomFiles(classFileLocation, outputlines, destination);
+        }
     }
 
     public class OutputLine
     {
         static int count = 0;
 
-        public OutputLine(string command, string path)
+        public OutputLine(string command, string path, string name)
         {
             count++;
             Command = command;
             Path = path;
             Count = count;
+            Name = name;
         }
 
         public string Command { set; get; }
         public int Count { get; internal set; }
         public string Path { set; get; }
+        public string Name { set; get; }
     }
 }
