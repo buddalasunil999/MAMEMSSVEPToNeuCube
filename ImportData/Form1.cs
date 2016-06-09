@@ -4,37 +4,23 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace ImportData
 {
     public partial class Form1 : Form
     {
+        List<double> classes = new List<double> { 6.66, 7.5, 8.57, 10, 12 };
+
         public Form1()
         {
             InitializeComponent();
-        }
 
-        private void button1_Click(object sender, EventArgs e)
-        {
-            string directory = textBox1.Text;
-            string cygwinLocation = textBox2.Text;
-            string destination = Path.Combine(directory, "output");
-            if (!Directory.Exists(destination))
-                Directory.CreateDirectory(destination);
-
-            string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
-
-            string freqDir = Path.Combine(directory, "freq");
-            if (!Directory.Exists(freqDir))
-                Directory.CreateDirectory(freqDir);
-
-            string csvFilesDirectory = Path.Combine(directory, "csv");
-            if (!Directory.Exists(csvFilesDirectory))
-                Directory.CreateDirectory(csvFilesDirectory);
-
-            //LoadFrequencyFilesFromPhysioNet(freqDir, cygwinLocation);
-            PopulateSubjects(freqDir);
+            foreach (var cl in classes)
+            {
+                checkedListBox2.Items.Add(cl, true);
+            }
         }
 
         private void PopulateSubjects(string freqDir)
@@ -47,21 +33,94 @@ namespace ImportData
 
         private void LoadFrequencyFilesFromPhysioNet(string freqDir, string cygwinLocation)
         {
+            List<string> labels = new List<string> { "b", "c" };
             List<OutputLine> lines = new List<OutputLine>();
             for (int i = 1; i < 12; i++)
             {
                 string num = i.ToString();
                 if (i < 10)
                     num = "0" + num;
-                string name = string.Format("S0{0}a_freq.txt", num);
-                string path = Path.Combine(freqDir, name);
-                string command = string.Format("rdann -r mssvepdb/dataset1/S001a -a freq -v >'{0}'", path);
-                lines.Add(new OutputLine(command, path, name.Split('_')[0]));
+
+                foreach (var label in labels)
+                {
+                    string name = string.Format("S0{0}{1}_freq.txt", num, label);
+                    string path = Path.Combine(freqDir, name);
+                    string command = string.Format("rdann -r mssvepdb/dataset1/S001a -a freq -v >'{0}'", path);
+                    lines.Add(new OutputLine(command, path, name.Split('_')[0]));
+                }
             }
 
             foreach (var line in lines)
             {
                 ExecuteCommand(cygwinLocation, line, (li) => { });
+            }
+        }
+
+        private void LoadFromPhysioNetSingleSubject(string directory, string freqDir, string destFolder, List<OutputLine> outputlines)
+        {
+            bool period = false;
+
+            List<double> classes = new List<double> { 6.66, 7.5, 8.57, 10, 12 };
+            if (!Directory.Exists(Path.Combine(directory, "Commands")))
+                Directory.CreateDirectory(Path.Combine(directory, "Commands"));
+
+            string output = Path.Combine(directory, "Commands", "commands.txt");
+
+            var subjectFile = Directory.GetFiles(freqDir).First();
+            string name = Path.GetFileNameWithoutExtension(subjectFile).Split('_')[0];
+            var lines = File.ReadAllLines(subjectFile).Skip(1);
+
+            string begin = string.Empty;
+            string end = string.Empty;
+
+            foreach (var line in lines)
+            {
+                string[] splits = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+
+                string last = splits.Last();
+
+                if (last.EndsWith("B"))
+                {
+                    begin = splits.First();
+                }
+                else
+                {
+                    end = splits.First();
+
+                    double val = Convert.ToDouble(last.Remove(last.Length - 1));
+
+                    foreach (double cl in classes)
+                    {
+                        if (Math.Abs(cl - val) < 0.5)
+                        {
+                            string[] timeformats = { @"m\:ss", @"mm\:ss", @"h\:mm\:ss" };
+                            int total = Convert.ToInt32(TimeSpan.ParseExact(splits.First().Split('.')[0], timeformats, CultureInfo.InvariantCulture).TotalSeconds);
+
+                            string beginTime = begin;
+                            string endTime = end;
+
+                            if (period)
+                            {
+                                beginTime = total.ToString();
+                                endTime = (total + 5).ToString();
+                            }
+
+                            string destPath = Path.Combine(destFolder, string.Format("{0}_{1}_To_{2}_{3}.csv", name, beginTime.Replace(":", "."), endTime.Replace(":", "."), cl));
+                            string command = string.Format("rdsamp -r mssvepdb/dataset1/{0} -c -H -f {1} -t {2} -v -pd -s 46 36 35 1 100 125 68 95 201 20 182 169 149 223 17 115 >'{3}'", name, beginTime, endTime, destPath);
+                            outputlines.Add(new OutputLine(command, destPath, name));
+                            break;
+                        }
+                    }
+                }
+            }
+
+
+            using (StreamWriter file = new StreamWriter(output))
+            {
+                foreach (OutputLine line in outputlines)
+                {
+                    file.WriteLine(line.Command);
+                }
             }
         }
 
@@ -142,6 +201,90 @@ namespace ImportData
             }
         }
 
+        private void LoadFromPhysioNetCommandsEachSubjectAllSamples(string directory, string freqDir, string destFolder, List<OutputLine> outputlines)
+        {
+            bool period = false;
+            int skipTrails = 0;
+
+            if (!Directory.Exists(Path.Combine(directory, "Commands")))
+                Directory.CreateDirectory(Path.Combine(directory, "Commands"));
+
+            string output = Path.Combine(directory, "Commands", "commands.txt");
+
+            var selectedClasses = checkedListBox2.CheckedItems.Cast<double>();
+
+            foreach (var file in Directory.GetFiles(freqDir))
+            {
+                string name = Path.GetFileNameWithoutExtension(file).Split('_')[0];
+
+                if (checkedListBox1.CheckedItems.Cast<string>().Contains(name))
+                {
+                    var lines = File.ReadAllLines(file).Skip(17);
+
+                    int count = 0;
+                    List<string> covered = new List<string>();
+                    string begin = string.Empty;
+                    string end = string.Empty;
+
+                    for (int i = 0; i < lines.Count(); i++)
+                    {
+                        var line = lines.ElementAt(i);
+
+                        string[] splits = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+
+                        string last = splits.Last();
+
+                        if (last.EndsWith("B"))
+                        {
+                            begin = splits.First();
+                        }
+                        else
+                        {
+                            end = splits.First();
+
+                            double val = Convert.ToDouble(last.Remove(last.Length - 1));
+
+                            foreach (double cl in selectedClasses)
+                            {
+                                if (Math.Abs(cl - val) < 0.5)
+                                {
+                                    count++;
+                                    string[] timeformats = { @"m\:ss", @"mm\:ss", @"h\:mm\:ss" };
+                                    int total = Convert.ToInt32(TimeSpan.ParseExact(splits.First().Split('.')[0], timeformats, CultureInfo.InvariantCulture).TotalSeconds);
+
+                                    string beginTime = begin;
+                                    string endTime = end;
+
+                                    if (period)
+                                    {
+                                        beginTime = (total - 5).ToString();
+                                        endTime = (total + 5).ToString();
+                                    }
+
+                                    string destPath = Path.Combine(destFolder, string.Format("{0}_{1}_To_{2}_{3}.csv", name, beginTime.Replace(":", "."), endTime.Replace(":", "."), cl));
+                                    string command = string.Format("rdsamp -r mssvepdb/dataset1/{0} -c -H -f {1} -t {2} -v -pd -s 46 36 35 1 100 125 68 95 201 20 182 169 149 223 17 115 >'{3}'", name, beginTime, endTime, destPath);
+                                    outputlines.Add(new OutputLine(command, destPath, name));
+                                    covered.Add(cl.ToString());
+                                }
+                            }
+
+                            i = i + skipTrails;
+                        }
+
+                        //if (count == selectedClasses.Count()) break;
+                    }
+
+                    using (StreamWriter fileStream = new StreamWriter(output))
+                    {
+                        foreach (OutputLine line in outputlines)
+                        {
+                            fileStream.WriteLine(line.Command);
+                        }
+                    }
+                }
+            }
+        }
+
         private void GenerateNeucomFiles(string classFileLocation, List<OutputLine> outputlines, string destination)
         {
             if (!File.Exists(classFileLocation))
@@ -151,19 +294,22 @@ namespace ImportData
             {
                 foreach (var output in outputlines)
                 {
-                    string file = output.Path;
-
-                    string destFilePath = Path.Combine(destination, string.Format("sam{0}_eeg.csv", output.Count));
-                    using (StreamWriter outputFile = new StreamWriter(destFilePath))
+                    if (checkedListBox1.CheckedItems.Cast<string>().Contains(output.Name))
                     {
-                        foreach (var line in File.ReadAllLines(file).Skip(2))
-                        {
-                            outputFile.WriteLine(line.Remove(0, line.IndexOf(',') + 1));
-                        }
-                    }
+                        string file = output.Path;
 
-                    int cat = GetClass(file);
-                    classFile.WriteLine(cat);
+                        string destFilePath = Path.Combine(destination, string.Format("sam{0}_eeg.csv", output.Count));
+                        using (StreamWriter outputFile = new StreamWriter(destFilePath))
+                        {
+                            foreach (var line in File.ReadAllLines(file).Skip(2))
+                            {
+                                outputFile.WriteLine(line.Remove(0, line.IndexOf(',') + 1));
+                            }
+                        }
+
+                        int cat = GetClass(file);
+                        classFile.WriteLine(cat);
+                    }
                 }
             }
         }
@@ -193,19 +339,11 @@ namespace ImportData
         private int GetClass(string file)
         {
             double cat = Convert.ToDouble(Path.GetFileNameWithoutExtension(file).Split('_').Last());
-
-            switch ((int)cat)
+            int count = 1;
+            foreach (var item in checkedListBox2.CheckedItems.Cast<double>())
             {
-                case 6:
-                    return 1;
-                case 7:
-                    return 2;
-                case 8:
-                    return 3;
-                case 10:
-                    return 4;
-                case 12:
-                    return 5;
+                if (item == cat) return count;
+                count++;
             }
 
             return 0;
@@ -251,7 +389,7 @@ namespace ImportData
             //}
 
 
-            if (checkBox1.Checked || !File.Exists(line.Path.Replace(":", ".")))
+            if (checkBox1.Checked || !File.Exists(line.Path))
                 sw.WriteLine(line.Command);
 
             sw.Close();
@@ -260,6 +398,34 @@ namespace ImportData
             proc.WaitForExit();
             proc.Close();
         }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            string directory = textBox1.Text;
+            string cygwinLocation = textBox2.Text;
+            string destination = Path.Combine(directory, "output");
+            if (!Directory.Exists(destination))
+                Directory.CreateDirectory(destination);
+
+            string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
+
+            string freqDir = Path.Combine(directory, "freq");
+            if (!Directory.Exists(freqDir))
+                Directory.CreateDirectory(freqDir);
+
+            string csvFilesDirectory = Path.Combine(directory, "csv");
+            if (!Directory.Exists(csvFilesDirectory))
+                Directory.CreateDirectory(csvFilesDirectory);
+
+            if (checkBox1.Checked)
+            {
+                //LoadFrequencyFilesFromPhysioNet(freqDir, cygwinLocation);
+            }
+
+            PopulateSubjects(freqDir);
+        }
+
+        List<OutputLine> outputlines = new List<OutputLine>();
 
         private void button2_Click(object sender, EventArgs e)
         {
@@ -271,7 +437,8 @@ namespace ImportData
 
             foreach (var file in allFiles)
             {
-                string[] allLines = File.ReadAllLines(file);
+                string[] totalLines = File.ReadAllLines(file);
+                string[] allLines = totalLines.Take(totalLines.Count() - 4).ToArray();
 
                 int length = allLines[0].Split(',').Count();
 
@@ -309,6 +476,44 @@ namespace ImportData
 
                 File.WriteAllLines(file, selectedLines);
             }
+        }
+
+        private void button5_Click(object sender, EventArgs e)
+        {
+            string directory = textBox1.Text;
+            string cygwinLocation = textBox2.Text;
+            string destination = Path.Combine(directory, "output");
+            string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
+            string freqDir = Path.Combine(directory, "freq");
+            string csvFilesDirectory = Path.Combine(directory, "csv");
+
+            outputlines = new List<OutputLine>();
+
+            LoadFromPhysioNetCommandsEachSubjectAllSamples(directory, freqDir, csvFilesDirectory, outputlines);
+
+            if (checkedListBox1.CheckedItems.Count > 0)
+            {
+                foreach (var line in outputlines.Where(x => checkedListBox1.CheckedItems.Cast<string>().Contains(x.Name)))
+                {
+                    //ExecuteCommand(cygwinLocation, line, (li) =>
+                    //{
+                    //    //File.WriteAllLines(Path.Combine(directory, "Commands", "commands.txt"), outputlines.Except(new[] { li }).Select(x => x.Command));
+                    //});
+                }
+            }
+        }
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+            string directory = textBox1.Text;
+            string cygwinLocation = textBox2.Text;
+            string destination = Path.Combine(directory, "output");
+            string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
+            string freqDir = Path.Combine(directory, "freq");
+            string csvFilesDirectory = Path.Combine(directory, "csv");
+
+            OutputLine.Counter = 0;
+            GenerateNeucomFiles(classFileLocation, outputlines, destination);
         }
 
         private void button3_Click(object sender, EventArgs e)
@@ -353,43 +558,59 @@ namespace ImportData
             File.WriteAllLines(dest2, combined2);
         }
 
-        private void button4_Click(object sender, EventArgs e)
+        private void checkBox3_CheckedChanged(object sender, EventArgs e)
         {
-            string directory = textBox1.Text;
-            string cygwinLocation = textBox2.Text;
-            string destination = Path.Combine(directory, "output");
-            string classFileLocation = Path.Combine(destination, "tar_class_labels.csv");
-            string freqDir = Path.Combine(directory, "freq");
-            string csvFilesDirectory = Path.Combine(directory, "csv");
-
-            List<OutputLine> outputlines = new List<OutputLine>();
-            LoadFromPhysioNet(directory, freqDir, csvFilesDirectory, outputlines);
-
-            if (checkedListBox1.CheckedItems.Count > 0)
+            for (int i = 0; i < checkedListBox1.Items.Count; i++)
             {
-                foreach (var line in outputlines.Where(x => checkedListBox1.CheckedItems.Cast<string>().Contains(x.Name)))
-                {
-                    ExecuteCommand(cygwinLocation, line, (li) =>
-                  {
-                      //File.WriteAllLines(Path.Combine(directory, "Commands", "commands.txt"), outputlines.Except(new[] { li }).Select(x => x.Command));
-                  });
-                }
+                checkedListBox1.SetItemChecked(i, checkBox3.Checked);
             }
+        }
 
-            GenerateNeucomFiles(classFileLocation, outputlines, destination);
+        private void button6_Click(object sender, EventArgs e)
+        {
+            string path = Path.Combine(textBox1.Text, "output");
+
+            var allFiles = Directory.GetFiles(path, "sam*");
+            int lastNum = allFiles.Select(x => Convert.ToInt32(Regex.Match(Path.GetFileNameWithoutExtension(x), @"\d+").Value)).OrderBy(x => x).Last();
+            string classPath = Path.Combine(path, "tar_class_labels.csv");
+
+            using (StreamWriter classFile = new StreamWriter(classPath, true))
+            {
+                foreach (var file in allFiles)
+                {
+                    string[] selectedLines = File.ReadAllLines(file);
+
+                    int take = Convert.ToInt32(textBox3.Text);
+                    int count = 0;
+                    string cl = selectedLines.First().Split(',').Last();
+                    do
+                    {
+                        lastNum++;
+                        var filteredLines = selectedLines.Skip(count).Take(take);
+                        File.WriteAllLines(Path.Combine(path, string.Format("sam{0}_eeg.csv", lastNum)), filteredLines);
+
+                        classFile.WriteLine(cl);
+
+                        count += take;
+                    } while (count < selectedLines.Length - take);
+
+                    File.WriteAllLines(file, selectedLines.Skip(count).Take(take));
+                }
+
+            }
         }
     }
 
     public class OutputLine
     {
-        static int count = 0;
+        public static int Counter = 0;
 
         public OutputLine(string command, string path, string name)
         {
-            count++;
+            Counter++;
             Command = command;
             Path = path;
-            Count = count;
+            Count = Counter;
             Name = name;
         }
 
