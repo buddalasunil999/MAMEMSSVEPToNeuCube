@@ -419,7 +419,7 @@ namespace ImportData
 
             if (checkBox1.Checked)
             {
-                //LoadFrequencyFilesFromPhysioNet(freqDir, cygwinLocation);
+                LoadFrequencyFilesFromPhysioNet(freqDir, cygwinLocation);
             }
 
             PopulateSubjects(freqDir);
@@ -495,10 +495,10 @@ namespace ImportData
             {
                 foreach (var line in outputlines.Where(x => checkedListBox1.CheckedItems.Cast<string>().Contains(x.Name)))
                 {
-                    //ExecuteCommand(cygwinLocation, line, (li) =>
-                    //{
-                    //    //File.WriteAllLines(Path.Combine(directory, "Commands", "commands.txt"), outputlines.Except(new[] { li }).Select(x => x.Command));
-                    //});
+                    ExecuteCommand(cygwinLocation, line, (li) =>
+                    {
+                        //File.WriteAllLines(Path.Combine(directory, "Commands", "commands.txt"), outputlines.Except(new[] { li }).Select(x => x.Command));
+                    });
                 }
             }
         }
@@ -573,16 +573,18 @@ namespace ImportData
             var allFiles = Directory.GetFiles(path, "sam*");
             int lastNum = allFiles.Select(x => Convert.ToInt32(Regex.Match(Path.GetFileNameWithoutExtension(x), @"\d+").Value)).OrderBy(x => x).Last();
             string classPath = Path.Combine(path, "tar_class_labels.csv");
+            var classLebels = File.ReadAllLines(classPath);
 
             using (StreamWriter classFile = new StreamWriter(classPath, true))
             {
-                foreach (var file in allFiles)
+                for (int i = 0; i < allFiles.Length; i++)
                 {
+                    var file = allFiles[i];
                     string[] selectedLines = File.ReadAllLines(file);
 
                     int take = Convert.ToInt32(textBox3.Text);
                     int count = 0;
-                    string cl = selectedLines.First().Split(',').Last();
+                    string cl = classLebels[i];
                     do
                     {
                         lastNum++;
